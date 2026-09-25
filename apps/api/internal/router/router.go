@@ -74,6 +74,11 @@ func New(h *handler.Handler) http.Handler {
 		// Cross-contract events explorer feed (issue #97).
 		get("/events", h.ListAllEvents)
 
+		// Alert deduplication and grouping engine (issue #269).
+		// GET /api/v1/alerts          — grouped view (default)
+		// GET /api/v1/alerts?flat=true — raw ContractAlert feed
+		get("/alerts", h.ListAlerts)
+
 		// Cross-contract comparison (issue #324): one round-trip that fans
 		// out to the per-contract stats/health lookups in parallel.
 		get("/compare", h.CompareContracts)
