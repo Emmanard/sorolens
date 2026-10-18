@@ -21,6 +21,7 @@ import (
 	"github.com/sorolens/sorolens/services/indexer/internal/pgstore"
 	"github.com/sorolens/sorolens/services/indexer/internal/poller"
 	"github.com/sorolens/sorolens/services/indexer/internal/rulesengine"
+	"github.com/sorolens/sorolens/services/indexer/internal/scval"
 	"github.com/sorolens/sorolens/services/indexer/internal/watchdog"
 )
 
@@ -264,7 +265,7 @@ func decodeWatchdogValue(valueXDR string) map[string]any {
 	if valueXDR == "" {
 		return out
 	}
-	sc, err := decodeScVal(valueXDR)
+	sc, err := scval.Decode(valueXDR)
 	if err != nil {
 		return out
 	}

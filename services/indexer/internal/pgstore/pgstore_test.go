@@ -84,6 +84,120 @@ func TestConnect_FailsFastWhenUnreachable(t *testing.T) {
 	}
 }
 
+func TestBatchInsertEvents_PopulatesDecodedFields(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	prefix := uniquePrefix(t)
+	ids := seedContracts(t, s, prefix, "a")
+
+	// Test event with valid XDR from integration test
+	events := []poller.Event{
+		{
+			ID:               "evt_1",
+			ContractID:       ids[0],
+			Network:          "testnet",
+			Ledger:           12345,
+			LedgerClosedAt:   time.Now(),
+			TxHash:           "hash123",
+			Type:             "contract",
+			TopicXDR:         []string{"AAAADwAAAAh0cmFuc2Zlcg=="}, // Symbol("transfer")
+			ValueXDR:         "AAAACgAAAAAAAAAAAAAAAAAAA+g=", // I128(1000)
+			InSuccessfulCall: true,
+		},
+	}
+
+	err := s.BatchInsertEvents(ctx, events)
+	if err != nil {
+		t.Fatalf("BatchInsertEvents: %v", err)
+	}
+
+	// Verify decoded fields were populated
+	var topicDecoded, valueDecoded []byte
+	err = s.pool.QueryRow(ctx, `
+		SELECT topic_decoded, value_decoded FROM events WHERE id = $1`,
+		"evt_1").Scan(&topicDecoded, &valueDecoded)
+	if err != nil {
+		t.Fatalf("query decoded fields: %v", err)
+	}
+
+	if topicDecoded == nil {
+		t.Error("topic_decoded should not be null")
+	}
+	if valueDecoded == nil {
+		t.Error("value_decoded should not be null")
+	}
+
+	// Verify the decoded values are correct
+	var topicResult []any
+	if err := json.Unmarshal(topicDecoded, &topicResult); err != nil {
+		t.Fatalf("unmarshal topic_decoded: %v", err)
+	}
+	if len(topicResult) != 1 {
+		t.Errorf("topic_decoded length: got %d, want 1", len(topicResult))
+	}
+	// The topic should be the decoded Symbol value "transfer"
+	if topicResult[0] != "transfer" {
+		t.Errorf("topic_decoded[0]: got %v, want transfer", topicResult[0])
+	}
+
+	var valueResult any
+	if err := json.Unmarshal(valueDecoded, &valueResult); err != nil {
+		t.Fatalf("unmarshal value_decoded: %v", err)
+	}
+	// The value should be the decoded I128 value as string "1000"
+	valueStr, ok := valueResult.(string)
+	if !ok {
+		t.Fatalf("value_decoded type: got %T, want string", valueResult)
+	}
+	if valueStr != "1000" {
+		t.Errorf("value_decoded: got %v, want 1000", valueStr)
+	}
+}
+
+func TestBatchInsertEvents_HandlesUndecodableValues(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	prefix := uniquePrefix(t)
+	ids := seedContracts(t, s, prefix, "b")
+
+	// Test event with undecodable value
+	events := []poller.Event{
+		{
+			ID:               "evt_2",
+			ContractID:       ids[0],
+			Network:          "testnet",
+			Ledger:           12346,
+			LedgerClosedAt:   time.Now(),
+			TxHash:           "hash456",
+			Type:             "contract",
+			TopicXDR:         []string{"invalid"},
+			ValueXDR:         "invalid_base64",
+			InSuccessfulCall: true,
+		},
+	}
+
+	err := s.BatchInsertEvents(ctx, events)
+	if err != nil {
+		t.Fatalf("BatchInsertEvents should not fail on undecodable values: %v", err)
+	}
+
+	// Verify decoded fields are null for undecodable values
+	var topicDecoded, valueDecoded []byte
+	err = s.pool.QueryRow(ctx, `
+		SELECT topic_decoded, value_decoded FROM events WHERE id = $1`,
+		"evt_2").Scan(&topicDecoded, &valueDecoded)
+	if err != nil {
+		t.Fatalf("query decoded fields: %v", err)
+	}
+
+	if topicDecoded != nil {
+		t.Error("topic_decoded should be null for undecodable value")
+	}
+	if valueDecoded != nil {
+		t.Error("value_decoded should be null for undecodable value")
+	}
+}
+
 func TestListContracts_CursorPagination(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
