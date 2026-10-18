@@ -22,6 +22,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/sorolens/sorolens/services/indexer/internal/poller"
+	"github.com/sorolens/sorolens/services/indexer/internal/scval"
 )
 
 // storageHealthyHorizonLedgers mirrors the constant in
@@ -170,14 +171,48 @@ func (s *Store) BatchInsertEvents(ctx context.Context, events []poller.Event) er
 		if err != nil {
 			return fmt.Errorf("marshal topic_xdr for event %s: %w", e.ID, err)
 		}
+
+		// Decode topics for topic_decoded
+		var topicDecoded []any
+		for _, topic := range topics {
+			sc, err := scval.Decode(topic)
+			if err != nil {
+				topicDecoded = append(topicDecoded, nil)
+			} else {
+				topicDecoded = append(topicDecoded, sc.Value)
+			}
+		}
+		topicDecodedJSON, err := json.Marshal(topicDecoded)
+		if err != nil {
+			return fmt.Errorf("marshal topic_decoded for event %s: %w", e.ID, err)
+		}
+
+		// Decode value for value_decoded
+		var valueDecoded any
+		if e.ValueXDR != "" {
+			sc, err := scval.Decode(e.ValueXDR)
+			if err != nil {
+				valueDecoded = nil
+			} else {
+				valueDecoded = sc.Value
+			}
+		}
+		var valueDecodedJSON []byte
+		if valueDecoded != nil {
+			valueDecodedJSON, err = json.Marshal(valueDecoded)
+			if err != nil {
+				return fmt.Errorf("marshal value_decoded for event %s: %w", e.ID, err)
+			}
+		}
+
 		batch.Queue(`
 			INSERT INTO events
 				(id, contract_id, network, ledger, ledger_closed_at, tx_hash, type,
-				 topic_xdr, value_xdr, in_successful_call, inserted_at)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+				 topic_xdr, value_xdr, topic_decoded, value_decoded, in_successful_call, inserted_at)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
 			ON CONFLICT DO NOTHING`,
 			e.ID, e.ContractID, networkOrDefault(e.Network), int64(e.Ledger), e.LedgerClosedAt, e.TxHash, e.Type,
-			topicJSON, e.ValueXDR, e.InSuccessfulCall, now,
+			topicJSON, e.ValueXDR, topicDecodedJSON, valueDecodedJSON, e.InSuccessfulCall, now,
 		)
 	}
 	return execBatch(ctx, s.pool, batch, "batch insert events")
